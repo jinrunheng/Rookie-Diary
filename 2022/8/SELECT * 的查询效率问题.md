@@ -1,4 +1,7 @@
 ## SELECT * 的查询效率问题
+
+![](https://files.mdnice.com/user/19026/15064a26-63e6-45e4-9d3b-5c4b162bed37.png)
+
 《阿里巴巴 Java 开发手册》中，强调：
 > 在表查询中，一律不要使用 * 作为查询的字段列表，需要哪些字段必须明确写明
 
@@ -61,14 +64,48 @@ select * from T where col1 = '123'
 
 ### 2. 增减字段容易与 resultMap 配置不一致
 
-如果我们使用 `select col1,col2...` 这种方式，在阅读程序时，我们可以清晰地看到获取的列名。当表结构发生变动，譬如新增某些字段或删除某些字段时，我们也可以很快地修改 mapper 中的查询 SQL，以及 resultMap 对应的字段。
+如果我们使用 `select col1,col2...` 这种方式，在阅读程序时，我们可以清晰地看到获取的列名，而如果我们使用 `select *`，当开发人员阅读代码时，并不知道这条 SQL 究竟取到了哪些具体的字段，代码的可读性就会变差。
+
+当表结构发生变动，譬如新增某些字段或删除某些字段时，使用 `select col1,col2...` 这种方式，我们也可以很快地修改 mapper 中的查询 SQL，以及 resultMap 对应的字段。
 
 反之，如果我们使用 `select *`，并且 resultMap 中的字段并没有与表的所有列对应时，修改便很容易出错。
 
 ### 3. 无用字段增加网络消耗，尤其是 text 类型的字段
 
-当我们并不需要某些字段，而使用了 `select *`，且返回的无用字段是 BLOB,TEXT 类型的大文本字段时，无疑对性能是一种严重的消耗。
+在我们并不需要某些字段，并使用了 `select *` 做查询，尤其在返回的无用字段是 BLOB,TEXT 类型字段时，无疑对性能是一种严重的消耗。
 
-BLOB 和 TEXT 是为了存储大数据而设计的字符串数据类型，当 BLOB 和 TEXT 值太大时，InnoDB 存储引擎会使用专门的外部存储区域来存储它们，每个值在行内需要 1~4 字节存储一个指针，在外部存储区域存储实际的值，并且让指针指向外部存储区域。如果 `select *` 中有 BLOB 或 TEXT 类型的字段，那么在查询这些列时，需要额外消耗一次 IO。
+BLOB 是一个二进制字符串，主要用于存储二进制大对象，例如图片和音视频；TEXT 则是为了存储大量字符串，譬如文章而设计的字符串数据类型。
 
-而传输这些大文本字段更是耗费时间的，尤其是当数据库与应用程序不在同一台服务器时，这种网络开销将会非常的大。大量的数据意味着使用更多的网络带宽，网络带宽的增加还意味着数据将需要更长的时间才能到达客户端应用程序。
+当我们使用 `select *` 查询，查询结果中一旦包含了 BLOB 或 TEXT 列时，就会导致服务器读取磁盘上的表做查询，而不是内存中的临时表。其原因自然是可想而知的，MySQL 不可能将 BLOB 和 TEXT 这样的大对象存放于内存中，而是在行内存储一个指针，然后指针指向磁盘中的存储区域。而一旦访问磁盘获取数据就意味着消耗磁盘 IO，意味着性能的下降。
+
+MySQL 官方文档也强调了，仅在确实需要查询结果中包含 BLOG 和 TEXT 列，否则请避免使用 `select *`。
+
+> Instances of BLOB or TEXT columns in the result of a query that is processed using a temporary table causes the server to use a table on disk rather than in memory because the MEMORY storage engine does not support those data types (see Section 8.4.4, “Internal Temporary Table Use in MySQL”). Use of disk incurs a performance penalty, so include BLOB or TEXT columns in the query result only if they are really needed. For example, avoid using SELECT *, which selects all columns.
+
+
+传输这些大文本字段更是耗费时间的，尤其是当数据库与应用程序不在同一台服务器时，这种网络开销将会非常的大。大量的数据意味着使用更多的网络带宽，网络带宽的增加还意味着数据将需要更长的时间才能到达客户端应用程序。
+
+无用的大数据传输导致造成额外的网络开销，这也是禁用 `select *` 的最重要一点原因。
+
+### 4. 总结
+
+综上所述，禁用 `select *` 的原因可以分为两方面：
+
+1. 性能
+2. 代码可维护性
+
+- 导致性能方面的主要原因有：
+
+  - 增加查询分析器解析成本（性能影响很小）
+  - `select *` 导致 MySQL 失去了只通过索引来访问数据的能力
+  - 返回结果集中的无用大对象 譬如 BLOG，TEXT 类型字段会增加磁盘 IO，网络 IO
+
+- 导致代码可维护性方面的主要原因有：
+
+  - 阅读性差
+  - 增减字段容易与 resultMap 配置不一致
+  - 等等...
+  
+ 
+至此为止，这篇文章就到这里了。欢迎大家关注我的公众号，在这里希望你可以收获更多的知识，我们下一期再见！
+ 
